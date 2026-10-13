@@ -1,14 +1,15 @@
-"""Report assembly — the lab's deliverable: baseline vs optimized + savings chart."""
+"""Report assembly for baseline vs optimized cost and savings chart."""
 from __future__ import annotations
 
 
 def build_report(baseline_usd: float, optimized_usd: float, levers: dict,
-                 sustainability: dict | None = None, period: str = "monthly") -> str:
+                 sustainability: dict | None = None, period: str = "monthly",
+                 extensions: list[tuple[str, list[str]]] | None = None) -> str:
     """Return a markdown cost-optimization report."""
     savings = baseline_usd - optimized_usd
     pct = (savings / baseline_usd * 100.0) if baseline_usd > 0 else 0.0
     lines = [
-        "# NimbusAI — GPU Cost Optimization Report",
+        "# NimbusAI - GPU Cost Optimization Report",
         "",
         f"**Period:** {period}  ",
         f"**Baseline spend:** ${baseline_usd:,.0f}  ",
@@ -31,7 +32,10 @@ def build_report(baseline_usd: float, optimized_usd: float, levers: dict,
             f"- Carbon per query: {sustainability.get('carbon_g', 0):.3f} gCO2e",
             f"- Cheapest+cleanest region: {sustainability.get('best_region', 'n/a')}",
         ]
-    lines += ["", "_Figures are June-2026 as-of snapshots; re-baseline before acting._"]
+    for heading, section_lines in extensions or []:
+        lines += ["", f"## {heading}", ""]
+        lines.extend(section_lines)
+    lines += ["", "_Figures are June-2026 as-of snapshots. Re-baseline before acting._"]
     return "\n".join(lines)
 
 

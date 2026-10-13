@@ -60,14 +60,21 @@ def break_even_utilization(discount_frac: float) -> float:
     return max(0.0, min(1.0, 1.0 - discount_frac))
 
 
-def recommend_tier(hours_per_day: float, interruptible: bool, reserved_discount: float = 0.45) -> str:
-    """Pick a purchasing tier from a workload's duty cycle + interruptibility.
+SPOT_INTERRUPTION_RATES = {
+    "H100": 0.03,
+    "H200": 0.035,
+    "A100": 0.05,
+    "A10G": 0.07,
+    "L4": 0.08,
+    "B200": 0.04,
+    "MI300X": 0.05,
+}
 
-    DOCUMENTED simple policy (instructor extension point — swap in your own):
-      - interruptible & not 24/7  -> 'spot'      (checkpoint and ride the discount)
-      - duty cycle >= break-even  -> 'reserved'  (steady, high utilization)
-      - otherwise                 -> 'on_demand' (spiky / low duty)
-    """
+
+def recommend_tier_baseline(
+    hours_per_day: float, interruptible: bool, reserved_discount: float = 0.45
+) -> str:
+    """Original simple policy retained for extension measurement."""
     duty = max(0.0, hours_per_day) / 24.0
     be = break_even_utilization(reserved_discount)
     if interruptible and hours_per_day < 24:
@@ -75,6 +82,37 @@ def recommend_tier(hours_per_day: float, interruptible: bool, reserved_discount:
     if duty >= be:
         return "reserved"
     return "on_demand"
+
+
+def recommend_tier(
+    hours_per_day: float,
+    interruptible: bool,
+    reserved_discount: float = 0.45,
+    gpu_type: str | None = None,
+    job_days: float | None = None,
+) -> str:
+    """Pick a purchasing tier from a workload's duty cycle + interruptibility.
+
+    Improved policy uses GPU-specific interruption risk for spot work.
+    M3 uses job_days to select one-year or three-year reserved pricing.
+    """
+    duty = max(0.0, hours_per_day) / 24.0
+    be = break_even_utilization(reserved_discount)
+    interruption_rate = SPOT_INTERRUPTION_RATES.get(gpu_type or "", 0.05)
+    if interruptible and hours_per_day < 24 and interruption_rate <= 0.08:
+        return "spot"
+    if duty >= be:
+        return "reserved"
+    return "on_demand"
+
+
+def reserved_term(job_days: float | None) -> str:
+    """Use one-year pricing for jobs shorter than 30 days.
+
+    A 30-day or longer recurring job is modeled with the three-year rate.
+    This is a planning assumption, not a provider contract.
+    """
+    return "reserved_1yr" if 0.0 < (job_days or 0.0) < 30.0 else "reserved_3yr"
 
 
 def spot_checkpoint_cost(

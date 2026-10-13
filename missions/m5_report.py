@@ -7,7 +7,7 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 import os
 from missions._common import num, catalog_by_type, ROOT
-from finops import report, sustainability
+from finops import report, sustainability, pricing
 from missions import m1_efficiency_audit, m2_inference_levers, m3_purchasing
 
 DAYS = 30
@@ -52,7 +52,48 @@ def run(verbose: bool = True) -> dict:
         "best_region": min(sustainability.REGION_CARBON, key=sustainability.REGION_CARBON.get),
     }
 
-    md = report.build_report(baseline, optimized, levers, sustainability=sust)
+    policy_before = r3["baseline_policy_monthly"]
+    policy_after = r3["optimized_monthly"]
+    old_policy_savings = (1.0 - policy_before / r3["on_demand_monthly"]) * 100 if r3["on_demand_monthly"] else 0.0
+    new_policy_savings = (1.0 - policy_after / r3["on_demand_monthly"]) * 100 if r3["on_demand_monthly"] else 0.0
+    carbon_rows = r3["carbon_schedule"]
+    clean_region = carbon_rows[0]["clean_region"] if carbon_rows else "n/a"
+    carbon_before = sum(r["us_east_g"] for r in carbon_rows)
+    carbon_after = sum(r["clean_g"] for r in carbon_rows)
+    changed_jobs = [
+        r["job_id"] for r in r3["recommendations"]
+        if r["old_tier"] != r["tier"]
+        or r["commitment"] == "reserved_1yr"
+        or (r["tier"] == "spot" and r["gpu_type"] in pricing.SPOT_INTERRUPTION_RATES)
+    ]
+    extensions = [
+        (
+            "Extension 1: Purchasing policy",
+            [
+                "| Metric | Before | After |",
+                "|---|---:|---:|",
+                f"| Optimized monthly cost | ${policy_before:,.0f} | ${policy_after:,.0f} |",
+                f"| Purchasing savings vs on-demand | {old_policy_savings:.1f}% | {new_policy_savings:.1f}% |",
+                f"| Jobs affected by added logic | 0 | {len(changed_jobs)} |",
+                "",
+                "GPU-specific interruption rates drive spot estimates. Jobs shorter than 30 days use the one-year reserved rate. Jobs of 30 days or more use the three-year rate. This is a planning assumption, not a provider contract.",
+                f"Affected jobs: {', '.join(changed_jobs)}.",
+            ],
+        ),
+        (
+            "Extension 5: Carbon-aware scheduling",
+            [
+                "| Metric | us-east-1 | Clean region |",
+                "|---|---:|---:|",
+                f"| Region | us-east-1 | {clean_region} |",
+                f"| Interruptible-job carbon | {carbon_before:,.1f} gCO2e | {carbon_after:,.1f} gCO2e |",
+                f"| Carbon reduction | 0.0 gCO2e | {carbon_before - carbon_after:,.1f} gCO2e ({(1 - carbon_after / carbon_before) * 100:.1f}%) |",
+                "",
+                "Estimate uses observed job days, GPU count, catalog watts, and a 30-day month only for purchasing output. Carbon scheduling keeps job duration unchanged. Region latency and data transfer need review before migration.",
+            ],
+        ),
+    ]
+    md = report.build_report(baseline, optimized, levers, sustainability=sust, extensions=extensions)
     out_md = os.path.join(ROOT, "outputs", "report.md")
     os.makedirs(os.path.dirname(out_md), exist_ok=True)
     with open(out_md, "w") as f:
